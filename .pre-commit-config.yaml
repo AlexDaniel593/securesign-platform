@@ -1,0 +1,27 @@
+repos:
+  # Hook 1: Bandit para seguridad en backend
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.7
+    hooks:
+      - id: bandit
+        name: Bandit Security Scan
+        description: Escanea codigo Python en busca de vulnerabilidades
+        args:
+          - "-c"
+          - "backend/.bandit"
+          - "-ll"
+          - "-r"
+          - "backend/app/"
+        pass_filenames: false
+        always_run: true
+
+  # Hook 2: ESLint para calidad en frontend
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint Code Quality
+        entry: cmd /c "cd frontend && npx eslint . --fix --max-warnings=0"
+        language: system
+        files: ^frontend/.*\.(js|jsx|ts|tsx)$
+        pass_filenames: false
+        always_run: true

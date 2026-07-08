@@ -1,0 +1,20 @@
+# backend/.bandit - Version simplificada
+
+paths:
+  - app
+
+exclude:
+  - tests
+  - venv
+  - .venv
+  - migrations
+  - uploads
+
+severity: MEDIUM
+confidence: MEDIUM
+format: txt
+output: bandit-report.txt
+
+skips:
+  - B101  # assert_used
+  - B311  # random

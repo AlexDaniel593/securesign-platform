@@ -1,0 +1,72 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: securesign-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: securesign
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d securesign"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - securesign-net
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: securesign-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/securesign
+      SECRET_KEY: dev-secret-key-change-in-production
+      JWT_ALGORITHM: HS256
+      JWT_EXPIRATION_MINUTES: 60
+      AES_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      APP_NAME: SecureSign
+      APP_VERSION: 1.0.0
+      DEBUG: "true"
+      CA_COUNTRY: EC
+      CA_STATE: Pichincha
+      CA_LOCALITY: Quito
+      CA_ORG: ESPE
+      CA_ORG_UNIT: Seguridad
+      CA_COMMON_NAME: CA_SIMULADA
+      CA_VALIDITY_DAYS: 365
+    ports:
+      - "8000:8000"
+    networks:
+      - securesign-net
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: securesign-frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:8000/api/v1
+    ports:
+      - "3000:3000"
+    networks:
+      - securesign-net
+
+volumes:
+  postgres_data:
+
+networks:
+  securesign-net:
+    driver: bridge
