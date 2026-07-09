@@ -1,11 +1,12 @@
 import secrets
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr, Field
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
+from app.core.rate_limiter import login_rate_limiter
 from app.core.security import (
     create_access_token,
     hash_password,
@@ -14,15 +15,22 @@ from app.core.security import (
 from app.db.database import get_db
 from app.db.models import User
 from app.dependencies.auth import get_current_user
+from app.utils.validators import validate_password_strength
 
 router = APIRouter()
 
 
-# ---------- Request / Response Schemas ----------
-
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=72)
+    password: str = Field(min_length=8, max_length=20)
+
+    @field_validator("password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        error = validate_password_strength(v)
+        if error:
+            raise ValueError(error)
+        return v
 
 
 class LoginRequest(BaseModel):
@@ -32,7 +40,15 @@ class LoginRequest(BaseModel):
 
 class ChangePasswordRequest(BaseModel):
     current_password: str
-    new_password: str = Field(min_length=8, max_length=72)
+    new_password: str = Field(min_length=8, max_length=20)
+
+    @field_validator("new_password")
+    @classmethod
+    def password_strength(cls, v: str) -> str:
+        error = validate_password_strength(v)
+        if error:
+            raise ValueError(error)
+        return v
 
 
 class UserResponse(BaseModel):
@@ -91,9 +107,19 @@ async def register(
 
 @router.post("/login", response_model=TokenResponse)
 async def login(
+    request: Request,
     body: LoginRequest,
     db: AsyncSession = Depends(get_db),
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    allowed, retry_after = login_rate_limiter.is_allowed(client_ip)
+    if not allowed:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many login attempts. Try again in {retry_after} seconds.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
@@ -101,6 +127,8 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+
+    login_rate_limiter.reset(client_ip)
 
     if not user.is_active:
         raise HTTPException(
