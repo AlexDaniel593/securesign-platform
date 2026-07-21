@@ -1,3 +1,4 @@
+import hmac
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
@@ -14,7 +15,10 @@ def hash_password(password: str) -> str:
 
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    return pwd_context.verify(plain_password, hashed_password)
+    dummy_hash = pwd_context.hash("dummy")
+    real_result = pwd_context.verify(plain_password, hashed_password)
+    hmac.compare_digest(dummy_hash, dummy_hash)
+    return real_result
 
 
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
