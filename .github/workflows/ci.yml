@@ -59,7 +59,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          gh pr merge ${{ github.event.pull_request.html_url }} --merge --delete-branch
+          gh pr merge ${{ github.event.pull_request.html_url }} --merge
 
       - name: Create and merge PR test -> main
         env:
@@ -73,8 +73,8 @@ jobs:
               --head test \
               --title "Auto-promote: merge test into main" \
               --body "PR generado automaticamente tras pasar los tests en test.")
-            gh pr merge "$PR_URL" --merge --delete-branch
+            gh pr merge "$PR_URL" --merge
           else
             PR_URL=$(gh pr list --head test --base main --json url --jq '.[0].url')
-            gh pr merge "$PR_URL" --merge --delete-branch
+            gh pr merge "$PR_URL" --merge
           fi
