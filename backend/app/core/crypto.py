@@ -26,7 +26,7 @@ def generate_rsa_keypair() -> tuple[bytes, bytes]:
 
 
 def rsa_sign(private_key_pem: bytes, data: bytes) -> bytes:
-    private_key = serialization.load_pem_private_key(private_pem, password=None)
+    private_key = serialization.load_pem_private_key(private_key_pem, password=None)
     return private_key.sign(data, asym_padding.PKCS1v15(), hashes.SHA256())
 
 
