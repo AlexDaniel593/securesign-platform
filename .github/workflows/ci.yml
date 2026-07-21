@@ -1,0 +1,80 @@
+name: CI - Tests & Auto Promote
+
+on:
+  pull_request:
+    branches: [test]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./backend
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('backend/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run tests with coverage
+        run: |
+          pytest tests/ -v --cov=app --cov-report=xml --cov-report=term
+
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: backend/coverage.xml
+
+  auto-promote:
+    needs: test
+    if: success()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: test
+          fetch-depth: 0
+
+      - name: Merge PR to test
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh pr merge ${{ github.event.pull_request.html_url }} --merge --delete-branch
+
+      - name: Create and merge PR test -> main
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          git fetch origin main
+          PR_EXISTS=$(gh pr list --head test --base main --json id --jq 'length')
+          if [ "$PR_EXISTS" -eq 0 ]; then
+            PR_URL=$(gh pr create \
+              --base main \
+              --head test \
+              --title "Auto-promote: merge test into main" \
+              --body "PR generado automaticamente tras pasar los tests en test.")
+            gh pr merge "$PR_URL" --merge --delete-branch
+          else
+            PR_URL=$(gh pr list --head test --base main --json url --jq '.[0].url')
+            gh pr merge "$PR_URL" --merge --delete-branch
+          fi
