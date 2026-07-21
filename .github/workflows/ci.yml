@@ -57,13 +57,13 @@ jobs:
 
       - name: Merge PR to test
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           gh pr merge ${{ github.event.pull_request.html_url }} --merge --delete-branch
 
       - name: Create and merge PR test -> main
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
           git fetch origin main
           PR_EXISTS=$(gh pr list --head test --base main --json id --jq 'length')
