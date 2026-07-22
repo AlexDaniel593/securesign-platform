@@ -5,49 +5,49 @@ from httpx import AsyncClient
 @pytest.mark.asyncio
 class TestRegister:
     async def test_register_success(self, client: AsyncClient):
-        payload = {"email": "test@example.com", "password": "SecurePass1!"}
+        payload = {"name": "Test User", "email": "test@example.com", "password": "SecurePass1!"}
         resp = await client.post("/api/v1/auth/register", json=payload)
         assert resp.status_code == 201
         data = resp.json()
-        assert data["email"] == "test@example.com"
-        assert "id" in data
-        assert data["is_active"] is True
-        assert data["is_admin"] is False
+        assert "access_token" in data
+        assert data["token_type"] == "bearer"
+        assert data["user"]["email"] == "test@example.com"
+        assert data["user"]["name"] == "Test User"
 
     async def test_register_duplicate_email(self, client: AsyncClient):
-        payload = {"email": "dup@example.com", "password": "SecurePass1!"}
+        payload = {"name": "Dup User", "email": "dup@example.com", "password": "SecurePass1!"}
         await client.post("/api/v1/auth/register", json=payload)
         resp = await client.post("/api/v1/auth/register", json=payload)
         assert resp.status_code == 409
         assert "already registered" in resp.json()["detail"].lower()
 
     async def test_register_weak_password_no_upper(self, client: AsyncClient):
-        payload = {"email": "weak@example.com", "password": "securepass1!"}
+        payload = {"name": "Weak User", "email": "weak@example.com", "password": "securepass1!"}
         resp = await client.post("/api/v1/auth/register", json=payload)
         assert resp.status_code == 422
 
     async def test_register_weak_password_no_lower(self, client: AsyncClient):
-        payload = {"email": "weak2@example.com", "password": "SECUREPASS1!"}
+        payload = {"name": "Weak2 User", "email": "weak2@example.com", "password": "SECUREPASS1!"}
         resp = await client.post("/api/v1/auth/register", json=payload)
         assert resp.status_code == 422
 
     async def test_register_weak_password_no_number(self, client: AsyncClient):
-        payload = {"email": "weak3@example.com", "password": "SecurePass!"}
+        payload = {"name": "Weak3 User", "email": "weak3@example.com", "password": "SecurePass!"}
         resp = await client.post("/api/v1/auth/register", json=payload)
         assert resp.status_code == 422
 
     async def test_register_weak_password_no_special(self, client: AsyncClient):
-        payload = {"email": "weak4@example.com", "password": "SecurePass1"}
+        payload = {"name": "Weak4 User", "email": "weak4@example.com", "password": "SecurePass1"}
         resp = await client.post("/api/v1/auth/register", json=payload)
         assert resp.status_code == 422
 
     async def test_register_short_password(self, client: AsyncClient):
-        payload = {"email": "short@example.com", "password": "Sh0rt!"}
+        payload = {"name": "Short User", "email": "short@example.com", "password": "Sh0rt!"}
         resp = await client.post("/api/v1/auth/register", json=payload)
         assert resp.status_code == 422
 
     async def test_register_invalid_email(self, client: AsyncClient):
-        payload = {"email": "not-an-email", "password": "SecurePass1!"}
+        payload = {"name": "Bad Email", "email": "not-an-email", "password": "SecurePass1!"}
         resp = await client.post("/api/v1/auth/register", json=payload)
         assert resp.status_code == 422
 
@@ -57,7 +57,7 @@ class TestLogin:
     async def test_login_success(self, client: AsyncClient):
         await client.post(
             "/api/v1/auth/register",
-            json={"email": "login@example.com", "password": "SecurePass1!"},
+            json={"name": "Login User", "email": "login@example.com", "password": "SecurePass1!"},
         )
         resp = await client.post(
             "/api/v1/auth/login",
@@ -72,7 +72,7 @@ class TestLogin:
     async def test_login_wrong_password(self, client: AsyncClient):
         await client.post(
             "/api/v1/auth/register",
-            json={"email": "wrongpw@example.com", "password": "SecurePass1!"},
+            json={"name": "WrongPW User", "email": "wrongpw@example.com", "password": "SecurePass1!"},
         )
         resp = await client.post(
             "/api/v1/auth/login",
@@ -93,7 +93,7 @@ class TestMe:
     async def test_me_authenticated(self, client: AsyncClient):
         await client.post(
             "/api/v1/auth/register",
-            json={"email": "me@example.com", "password": "SecurePass1!"},
+            json={"name": "Me User", "email": "me@example.com", "password": "SecurePass1!"},
         )
         login_resp = await client.post(
             "/api/v1/auth/login",
@@ -150,7 +150,7 @@ class TestChangePassword:
     async def test_change_password_success(self, client: AsyncClient):
         await client.post(
             "/api/v1/auth/register",
-            json={"email": "changepw@example.com", "password": "SecurePass1!"},
+            json={"name": "ChangePW User", "email": "changepw@example.com", "password": "SecurePass1!"},
         )
         login_resp = await client.post(
             "/api/v1/auth/login",
@@ -174,7 +174,7 @@ class TestChangePassword:
     async def test_change_password_wrong_current(self, client: AsyncClient):
         await client.post(
             "/api/v1/auth/register",
-            json={"email": "wrongpw2@example.com", "password": "SecurePass1!"},
+            json={"name": "WrongPW2 User", "email": "wrongpw2@example.com", "password": "SecurePass1!"},
         )
         login_resp = await client.post(
             "/api/v1/auth/login",
