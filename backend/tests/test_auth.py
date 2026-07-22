@@ -125,7 +125,7 @@ class TestLogout:
     async def test_logout_authenticated(self, client: AsyncClient):
         await client.post(
             "/api/v1/auth/register",
-            json={"email": "logout@example.com", "password": "SecurePass1!"},
+            json={"name": "Logout User", "email": "logout@example.com", "password": "SecurePass1!"},
         )
         login_resp = await client.post(
             "/api/v1/auth/login",
