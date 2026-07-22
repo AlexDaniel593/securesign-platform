@@ -90,7 +90,7 @@ async def auth_token(client: AsyncClient):
     password = "FixturePass1!"
     await client.post(
         "/api/v1/auth/register",
-        json={"email": email, "password": password},
+        json={"name": "Auth User", "email": email, "password": password},
     )
     resp = await client.post(
         "/api/v1/auth/login",

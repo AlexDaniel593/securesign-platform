@@ -21,6 +21,7 @@ router = APIRouter()
 
 
 class RegisterRequest(BaseModel):
+    name: str = Field(min_length=2, max_length=255)
     email: EmailStr
     password: str = Field(min_length=8, max_length=20)
 
@@ -53,6 +54,7 @@ class ChangePasswordRequest(BaseModel):
 
 class UserResponse(BaseModel):
     id: int
+    name: str
     email: str
     is_admin: bool
     is_active: bool
@@ -71,7 +73,7 @@ class MessageResponse(BaseModel):
 
 # ---------- Endpoints ----------
 
-@router.post("/register", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+@router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
     body: RegisterRequest,
     db: AsyncSession = Depends(get_db),
@@ -88,6 +90,7 @@ async def register(
     password_hash = hash_password(body.password)
 
     user = User(
+        name=body.name,
         email=body.email,
         password_hash=password_hash,
         salt=salt,
@@ -96,12 +99,19 @@ async def register(
     await db.commit()
     await db.refresh(user)
 
-    return UserResponse(
-        id=user.id,
-        email=user.email,
-        is_admin=user.is_admin,
-        is_active=user.is_active,
-        created_at=user.created_at,
+    access_token = create_access_token(data={"sub": str(user.id), "email": user.email})
+
+    return TokenResponse(
+        access_token=access_token,
+        token_type="bearer",
+        user=UserResponse(
+            id=user.id,
+            name=user.name,
+            email=user.email,
+            is_admin=user.is_admin,
+            is_active=user.is_active,
+            created_at=user.created_at,
+        ),
     )
 
 
@@ -143,6 +153,7 @@ async def login(
         token_type="bearer",
         user=UserResponse(
             id=user.id,
+            name=user.name,
             email=user.email,
             is_admin=user.is_admin,
             is_active=user.is_active,
@@ -157,6 +168,7 @@ async def me(
 ):
     return UserResponse(
         id=current_user.id,
+        name=current_user.name,
         email=current_user.email,
         is_admin=current_user.is_admin,
         is_active=current_user.is_active,
