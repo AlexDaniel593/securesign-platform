@@ -266,7 +266,7 @@ async def check_certificate(
             detail="Certificate not found",
         )
 
-    now = datetime.now(timezone.utc)
+    now = datetime.utcnow()
 
     if cert.revoked:
         return CheckResponse(valid=False, status="revoked")

@@ -201,10 +201,12 @@ class TestRevokeCertificate:
 
         await client.post(
             f"/api/v1/certificates/{cert_id}/revoke",
+            json={},
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         resp = await client.post(
             f"/api/v1/certificates/{cert_id}/revoke",
+            json={},
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert resp.status_code == 400
@@ -213,6 +215,7 @@ class TestRevokeCertificate:
     async def test_revoke_not_found(self, client: AsyncClient, auth_token):
         resp = await client.post(
             "/api/v1/certificates/9999/revoke",
+            json={},
             headers={"Authorization": f"Bearer {auth_token}"},
         )
         assert resp.status_code == 404
@@ -270,6 +273,7 @@ class TestRevokeCertificate:
 
         resp = await client.post(
             f"/api/v1/certificates/{cert_id}/revoke",
+            json={},
             headers={"Authorization": f"Bearer {other_token}"},
         )
         assert resp.status_code == 404
