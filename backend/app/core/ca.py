@@ -102,8 +102,8 @@ def issue_certificate(subject_name: str, public_key_pem: str, validity_days: int
         "serial_number": str(serial_number),
         "subject": subject_name,
         "issuer": settings.CA_COMMON_NAME,
-        "valid_from": valid_from,
-        "valid_to": valid_to,
+        "valid_from": valid_from.replace(tzinfo=None),
+        "valid_to": valid_to.replace(tzinfo=None),
         "fingerprint": fingerprint,
     }
 
