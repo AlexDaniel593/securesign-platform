@@ -2,6 +2,7 @@
 
 import { useCallback, useState } from "react"
 import { UploadSection } from "@/features/documents/components/upload-section"
+import { DocumentList } from "@/features/documents/components/document-list"
 
 export default function DocumentsPage() {
   const [refetchTrigger, setRefetchTrigger] = useState(0)
@@ -17,10 +18,7 @@ export default function DocumentsPage() {
       </div>
 
       <UploadSection onUploadSuccess={triggerRefetch} />
-
-      <div className="rounded-md border bg-card p-6 text-center text-sm text-muted-foreground">
-        Lista de documentos (próxima fase)
-      </div>
+      <DocumentList refetchTrigger={refetchTrigger} />
     </div>
   )
 }
