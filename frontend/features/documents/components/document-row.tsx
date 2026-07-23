@@ -56,6 +56,7 @@ export function DocumentRow({
   const [isDownloading, setIsDownloading] = useState(false)
   const [isSigning, setIsSigning] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
+  const cancelledRef = useRef(false)
 
   // Focus the input when entering edit mode
   useEffect(() => {
@@ -68,11 +69,16 @@ export function DocumentRow({
   // Reset rename value to current filename when entering edit mode
   useEffect(() => {
     if (isEditing) {
+      cancelledRef.current = false
       setRenameValue(document.filename)
     }
   }, [isEditing, document.filename])
 
   const handleRenameSubmit = () => {
+    if (cancelledRef.current) {
+      cancelledRef.current = false
+      return
+    }
     const trimmed = renameValue.trim()
     const result = renameSchema.safeParse(trimmed)
     if (!result.success) {
@@ -86,6 +92,7 @@ export function DocumentRow({
     if (e.key === "Enter") {
       handleRenameSubmit()
     } else if (e.key === "Escape") {
+      cancelledRef.current = true
       onCancelEdit()
     }
   }

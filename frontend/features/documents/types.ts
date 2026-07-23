@@ -47,3 +47,8 @@ export interface SignatureItem {
 export interface SignaturesResponse {
   signatures: SignatureItem[]
 }
+
+export interface ApiError {
+  detail?: string
+  message?: string
+}
