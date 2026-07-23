@@ -354,6 +354,7 @@ class TestCheckCertificate:
 
         await client.post(
             f"/api/v1/certificates/{cert_id}/revoke",
+            json={},
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
