@@ -103,6 +103,14 @@ def verify_signature(document_hash: str, signature_b64: str, public_key_pem: str
         return {"valid": False, "message": f"Verification error: {str(e)}"}
 
 
+async def get_public_key_for_user(db: AsyncSession, user_id: int) -> str:
+    """Return the user's public key PEM string. Raises ValueError if no key exists."""
+    user_key = await get_user_key(db, user_id)
+    if not user_key:
+        raise ValueError(f"No RSA key pair found for user {user_id}.")
+    return user_key.public_key
+
+
 def encrypt_content(content_b64: str) -> dict:
     aes_key = bytes.fromhex(settings.AES_KEY)
     plaintext = base64.b64decode(content_b64)

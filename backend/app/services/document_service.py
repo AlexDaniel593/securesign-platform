@@ -1,21 +1,21 @@
-"""Business logic for document CRUD and file orchestration.
+"""Business logic for document CRUD and S3 object orchestration.
 
-Module-level constant UPLOAD_DIR is monkeypatched by tests to tmp_path.
+Storage operations are delegated to app.core.storage (async boto3 S3 client).
+Ownership enforcement, validation, and signing remain application-layer concerns.
 """
 
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import func, select
 
+from app.core import storage
 from app.core.crypto import hash_sha256
-from app.db.models import Document, Signature
+from app.db.models import Document, Signature, Certificate
 from app.services import crypto_service
-from app.utils import file_handlers
 
-UPLOAD_DIR: Path = Path(".")
 MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10 MB
 
 
@@ -35,14 +35,14 @@ async def upload_document(
         )
 
     sha256 = hash_sha256(content)
-    file_path = file_handlers.save_file(
-        UPLOAD_DIR, user_id, file.filename or "unnamed", content
+    object_key = await storage.upload_object(
+        user_id, file.filename or "unnamed", content
     )
 
     document = Document(
         user_id=user_id,
         filename=file.filename or "unnamed",
-        file_path=file_path,
+        object_key=object_key,
         file_size=file_size,
         sha256_hash=sha256,
     )
@@ -89,25 +89,19 @@ async def get_document_bytes(
 ) -> tuple[bytes, str]:
     """Return the raw file bytes and filename for a document owned by *user_id*."""
     doc = await get_document(db, user_id, doc_id)
-    try:
-        content = file_handlers.read_file(doc.file_path)
-    except Exception:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Document file not found on disk",
-        )
+    content = await storage.download_object(doc.object_key)
     return content, doc.filename
 
 
 # ---------------------------------------------------------------------------
-# Mutating / Sign operations — PR #2
+# Mutating / Sign operations
 # ---------------------------------------------------------------------------
 
 
 async def delete_document(db: AsyncSession, user_id: int, doc_id: int) -> None:
-    """Delete a document owned by *user_id*. Removes DB row and disk file."""
+    """Delete a document owned by *user_id*. Removes S3 object first, then DB row."""
     doc = await get_document(db, user_id, doc_id)
-    file_handlers.delete_file(doc.file_path)
+    await storage.delete_object(doc.object_key)
     await db.delete(doc)
     await db.commit()
 
@@ -183,3 +177,30 @@ def _validate_upload(file: UploadFile) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only PDF files are accepted. Upload a file with .pdf extension.",
         )
+
+
+async def check_certificate_validity(db: AsyncSession, cert_id: Optional[int]) -> str:
+    """Return certificate validity status based on DB columns.
+
+    Reads Certificate.revoked and valid_to; no PEM parsing.
+    Returns: 'valid' | 'revoked' | 'expired' | 'not_found'
+    """
+    if cert_id is None:
+        return "not_found"
+
+    result = await db.execute(
+        select(Certificate).where(Certificate.id == cert_id)
+    )
+    cert = result.scalar_one_or_none()
+
+    if cert is None:
+        return "not_found"
+
+    if cert.revoked:
+        return "revoked"
+
+    now = datetime.now(timezone.utc)
+    if cert.valid_to < now:
+        return "expired"
+
+    return "valid"
