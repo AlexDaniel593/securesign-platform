@@ -1,5 +1,4 @@
 import base64
-from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -17,6 +16,7 @@ from app.core.crypto import (
     rsa_sign,
     rsa_verify,
 )
+from app.core.time_utils import utc_now
 from app.db.models import UserKey
 
 
@@ -53,7 +53,7 @@ async def generate_keys(db: AsyncSession, user_id: int) -> dict:
         existing_key.private_key_encrypted = private_encrypted
         existing_key.public_key = public_pem.decode()
         existing_key.fingerprint = fingerprint
-        existing_key.created_at = datetime.now(timezone.utc)
+        existing_key.created_at = utc_now()
         db.add(existing_key)
     else:
         new_key = UserKey(
@@ -81,13 +81,13 @@ async def sign_hash(
     signature = rsa_sign(private_pem, data)
     signature_b64 = base64.b64encode(signature).decode()
 
-    user_key.last_used = datetime.now(timezone.utc)
+    user_key.last_used = utc_now()
     db.add(user_key)
     await db.commit()
 
     return {
         "signature": signature_b64,
-        "signed_at": datetime.now(timezone.utc),
+        "signed_at": utc_now(),
     }
 
 
