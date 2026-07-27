@@ -4,7 +4,7 @@ export interface DocumentItem {
   sha256_hash: string
   file_size: number
   uploaded_at: string
-  is_signed: boolean
+  signature_count: number
 }
 
 export interface DocumentListResponse {

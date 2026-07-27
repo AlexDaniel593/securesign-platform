@@ -150,10 +150,10 @@ export function DocumentRow({
           ) : (
             <span className="font-medium">
               {document.filename}
-              {document.is_signed && (
+              {document.signature_count > 0 && (
                 <span className="ml-2 inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-800">
                   <CheckCircle className="size-3" />
-                  Firmado
+                  {document.signature_count} {document.signature_count === 1 ? "firma" : "firmas"}
                 </span>
               )}
             </span>
