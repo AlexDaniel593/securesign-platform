@@ -4,6 +4,7 @@ export interface DocumentItem {
   sha256_hash: string
   file_size: number
   uploaded_at: string
+  is_signed: boolean
 }
 
 export interface DocumentListResponse {
@@ -41,11 +42,22 @@ export interface SignatureItem {
   certificate_id?: number
   signature_blob: string
   signed_at: string
-  is_valid?: boolean
+  is_valid?: boolean | null
+  verified_at?: string | null
+  signer_name: string
+  signer_email: string
 }
 
 export interface SignaturesResponse {
   signatures: SignatureItem[]
+}
+
+export interface VerificationResult {
+  is_valid: boolean
+  verified_at: string
+  signer_name: string
+  signer_email: string
+  certificate_status: "valid" | "revoked" | "expired" | "not_found"
 }
 
 export interface ApiError {

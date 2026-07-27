@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect } from "react"
 import { z } from "zod"
 import { toast } from "sonner"
-import { Loader2, Pencil, Download, Trash2, PenLine, ChevronDown, ChevronRight } from "lucide-react"
+import { Loader2, Pencil, Download, Trash2, PenLine, ChevronDown, ChevronRight, CheckCircle } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import type { DocumentItem } from "@/features/documents/types"
 import {
@@ -148,7 +148,15 @@ export function DocumentRow({
                 focus:outline-none focus:ring-1 focus:ring-ring"
             />
           ) : (
-            <span className="font-medium">{document.filename}</span>
+            <span className="font-medium">
+              {document.filename}
+              {document.is_signed && (
+                <span className="ml-2 inline-flex items-center gap-1 rounded bg-green-100 px-1.5 py-0.5 text-xs font-medium text-green-800">
+                  <CheckCircle className="size-3" />
+                  Firmado
+                </span>
+              )}
+            </span>
           )}
         </td>
         <td className="px-4 py-3 text-muted-foreground hidden sm:table-cell">

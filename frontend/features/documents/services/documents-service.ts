@@ -7,6 +7,7 @@ import type {
   SignResponse,
   SignRequest,
   SignaturesResponse,
+  VerificationResult,
 } from "@/features/documents/types"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"
@@ -113,4 +114,15 @@ export async function getSignatures(id: number): Promise<SignaturesResponse> {
     headers: { ...authHeaders() },
   })
   return handleResponse<SignaturesResponse>(response)
+}
+
+export async function verifySignature(
+  docId: number,
+  sigId: number
+): Promise<VerificationResult> {
+  const response = await fetch(`${API_URL}/documents/${docId}/verify/${sigId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+  })
+  return handleResponse<VerificationResult>(response)
 }
