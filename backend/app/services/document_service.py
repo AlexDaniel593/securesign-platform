@@ -9,11 +9,12 @@ from typing import Optional
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql import exists as sa_exists
 from sqlmodel import func, select
 
 from app.core import storage
 from app.core.crypto import hash_sha256
-from app.db.models import Document, Signature, Certificate
+from app.db.models import Document, Signature, Certificate, User
 from app.services import crypto_service
 
 MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10 MB
@@ -54,9 +55,20 @@ async def upload_document(
 
 async def list_documents(
     db: AsyncSession, user_id: int, page: int = 1, limit: int = 20
-) -> tuple[list[Document], int]:
-    """Return a page of documents owned by *user_id* and the total count."""
-    base_query = select(Document).where(Document.user_id == user_id)
+) -> tuple[list[dict], int]:
+    """Return a page of documents owned by *user_id* and the total count.
+
+    Each document dict includes an ``is_signed`` boolean computed via an
+    EXISTS subquery on the signatures table (no N+1, no eager load).
+    """
+    has_sig = sa_exists().where(
+        Signature.document_id == Document.id
+    )
+
+    base_query = (
+        select(Document, has_sig.label("is_signed"))
+        .where(Document.user_id == user_id)
+    )
     count_query = select(func.count()).select_from(Document).where(Document.user_id == user_id)
 
     total_result = await db.execute(count_query)
@@ -66,8 +78,20 @@ async def list_documents(
     result = await db.execute(
         base_query.order_by(Document.uploaded_at.desc()).offset(offset).limit(limit)
     )
-    documents = result.scalars().all()
-    return list(documents), total
+    rows = result.all()
+
+    documents = []
+    for doc, is_signed in rows:
+        doc_dict = {
+            "id": doc.id,
+            "filename": doc.filename,
+            "file_size": doc.file_size,
+            "sha256_hash": doc.sha256_hash,
+            "uploaded_at": doc.uploaded_at,
+            "is_signed": bool(is_signed),
+        }
+        documents.append(doc_dict)
+    return documents, total
 
 
 async def get_document(db: AsyncSession, user_id: int, doc_id: int) -> Document:
@@ -154,15 +178,97 @@ async def sign_document(
 async def list_signatures(
     db: AsyncSession, user_id: int, doc_id: int
 ) -> list[Signature]:
-    """List all signatures for a document owned by *user_id*."""
+    """List all signatures for a document owned by *user_id*.
+
+    Ownership check on the document, but no user_id filter on signatures —
+    owner may view signatures from all signers (including co-signers).
+    """
     await get_document(db, user_id, doc_id)  # ownership check
     result = await db.execute(
         select(Signature).where(
             Signature.document_id == doc_id,
-            Signature.user_id == user_id,
         ).order_by(Signature.signed_at.desc())
     )
     return list(result.scalars().all())
+
+
+async def verify_document_signature(
+    db: AsyncSession, user_id: int, doc_id: int, sig_id: int
+) -> dict:
+    """Verify a signature's cryptographic validity and certificate status.
+
+    Orchestrates:
+      1. Ownership check on the document (get sha256_hash)
+      2. Fetch Signature row (validate sig.document_id == doc_id)
+      3. Get signer's public key
+      4. RSA verify (hash vs blob vs public key)
+      5. Certificate validity check
+      6. Persist verified_at + is_valid on Signature row
+      7. Fetch User for signer_name/signer_email
+      8. Return VerificationResult-shaped dict
+
+    Raises:
+      HTTPException(404) if sig doesn't belong to doc or doesn't exist.
+      HTTPException(500) on MinIO/crypto errors.
+    """
+    # 1. Ownership check → get sha256_hash
+    doc = await get_document(db, user_id, doc_id)
+
+    # 2. Fetch Signature row
+    result = await db.execute(
+        select(Signature).where(Signature.id == sig_id)
+    )
+    sig = result.scalar_one_or_none()
+    if sig is None or sig.document_id != doc_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Signature not found for this document",
+        )
+
+    # 3. Get signer's public key
+    try:
+        public_key_pem = await crypto_service.get_public_key_for_user(db, sig.user_id)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Signer's public key not found",
+        )
+
+    # 4. RSA verify
+    verify_result = crypto_service.verify_signature(
+        doc.sha256_hash, sig.signature_blob, public_key_pem
+    )
+    crypto_ok = verify_result["valid"]
+
+    # 5. Certificate validity check
+    cert_status = await check_certificate_validity(db, sig.certificate_id)
+    # A missing cert ('not_found') does not invalidate — signing without a
+    # certificate is valid in the current flow.
+    cert_ok = cert_status in ("valid", "not_found")
+
+    # 6. is_valid = crypto OK AND cert OK
+    is_valid = crypto_ok and cert_ok
+
+    # 7. Persist verified_at + is_valid
+    sig.verified_at = datetime.now(timezone.utc)
+    sig.is_valid = is_valid
+    db.add(sig)
+    await db.commit()
+    await db.refresh(sig)
+
+    # 8. Fetch User for identity
+    user_result = await db.execute(select(User).where(User.id == sig.user_id))
+    signer = user_result.scalar_one_or_none()
+    signer_name = signer.name if signer else "Unknown"
+    signer_email = signer.email if signer else "unknown@unknown"
+
+    return {
+        "is_valid": is_valid,
+        "verified_at": sig.verified_at,
+        "signer_name": signer_name,
+        "signer_email": signer_email,
+        "certificate_status": cert_status,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -200,7 +306,11 @@ async def check_certificate_validity(db: AsyncSession, cert_id: Optional[int]) -
         return "revoked"
 
     now = datetime.now(timezone.utc)
-    if cert.valid_to < now:
+    # cert.valid_to may be naive or aware depending on storage; normalize to UTC
+    valid_to = cert.valid_to
+    if valid_to.tzinfo is None:
+        valid_to = valid_to.replace(tzinfo=timezone.utc)
+    if valid_to < now:
         return "expired"
 
     return "valid"

@@ -666,3 +666,263 @@ class TestCertificateValidity:
 
         result = await check_certificate_validity(session, 99999)
         assert result == "not_found"
+
+
+# =====================================================================
+# POST /documents/{doc_id}/verify/{sig_id}  (Phase 3 RED)
+# =====================================================================
+
+
+@pytest.mark.asyncio
+class TestDocumentVerify:
+    """API integration tests for the signature verification endpoint.
+
+    RED phase — endpoint does not exist yet; all tests expected to get 404
+    until the route is registered.
+    """
+
+    async def _sign_and_get_sig_id(self, client: AsyncClient, token: str, doc_id: int) -> int:
+        """Sign a document and return the signature ID."""
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/sign",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert resp.status_code == 201, f"Sign failed: {resp.text}"
+        return resp.json()["signature_id"]
+
+    async def test_verify_valid_signature(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Verifying a valid signature returns is_valid=true and persists DB columns."""
+        # Upload + generate keys
+        upload = await _upload_doc(client, auth_token, "verify-me.pdf")
+        doc_id = upload.json()["id"]
+        await _generate_keys(client, auth_token)
+
+        # Sign
+        sig_id = await self._sign_and_get_sig_id(client, auth_token, doc_id)
+
+        # Verify
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/verify/{sig_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_valid"] is True
+        assert data["verified_at"] is not None
+        assert data["signer_name"]
+        assert data["signer_email"]
+        assert data["certificate_status"] == "not_found"
+
+        # DB persistence check — signatures list shows is_valid
+        sig_list = await client.get(
+            f"/api/v1/documents/{doc_id}/signatures",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert sig_list.status_code == 200
+        sigs = sig_list.json()["signatures"]
+        verified = next((s for s in sigs if s["id"] == sig_id), None)
+        assert verified is not None
+        assert verified["is_valid"] is True
+
+    async def test_verify_tampered_signature(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Verifying a tampered signature blob returns is_valid=false."""
+        upload = await _upload_doc(client, auth_token, "tamper-me.pdf")
+        doc_id = upload.json()["id"]
+        await _generate_keys(client, auth_token)
+
+        sig_id = await self._sign_and_get_sig_id(client, auth_token, doc_id)
+
+        # Tamper the signature blob in the DB directly
+        from app.db.database import async_session
+        async with async_session() as db:
+            from sqlmodel import select
+            from app.db.models import Signature
+
+            result = await db.execute(select(Signature).where(Signature.id == sig_id))
+            sig = result.scalar_one()
+            sig.signature_blob = "tampered-" + sig.signature_blob  # corrupt it
+            await db.commit()
+
+        # Verify should now return is_valid=false
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/verify/{sig_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_valid"] is False
+        assert data["verified_at"] is not None
+
+    async def test_verify_revoked_certificate(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Verifying a signature with a revoked certificate returns is_valid=false, status=revoked."""
+        upload = await _upload_doc(client, auth_token, "revoked-cert.pdf")
+        doc_id = upload.json()["id"]
+        await _generate_keys(client, auth_token)
+
+        # Issue a certificate
+        cert_resp = await client.post(
+            "/api/v1/certificates/issue",
+            json={"subject_name": "Revoked User"},
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert cert_resp.status_code == 201
+        cert_id = cert_resp.json()["id"]
+
+        # Sign with the certificate
+        sign_resp = await client.post(
+            f"/api/v1/documents/{doc_id}/sign",
+            json={"certificate_id": cert_id},
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert sign_resp.status_code == 201
+        sig_id = sign_resp.json()["signature_id"]
+
+        # Revoke the certificate
+        revoke_resp = await client.post(
+            f"/api/v1/certificates/{cert_id}/revoke",
+            json={"reason": "Testing"},
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert revoke_resp.status_code == 200, f"Revoke failed: {revoke_resp.text}"
+
+        # Verify should report revoked
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/verify/{sig_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_valid"] is False
+        assert data["certificate_status"] == "revoked"
+
+    async def test_verify_expired_certificate(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Verifying a signature with an expired certificate returns is_valid=false, status=expired."""
+        upload = await _upload_doc(client, auth_token, "expired-cert.pdf")
+        doc_id = upload.json()["id"]
+        await _generate_keys(client, auth_token)
+
+        # Issue a certificate
+        cert_resp = await client.post(
+            "/api/v1/certificates/issue",
+            json={"subject_name": "Expiring User"},
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert cert_resp.status_code == 201
+        cert_id = cert_resp.json()["id"]
+
+        # Manually expire the certificate by setting valid_to in the past
+        from app.db.database import async_session
+        from datetime import datetime, timedelta, timezone
+        async with async_session() as db:
+            from sqlmodel import select
+            from app.db.models import Certificate
+
+            result = await db.execute(select(Certificate).where(Certificate.id == cert_id))
+            cert = result.scalar_one()
+            cert.valid_to = datetime.now(timezone.utc) - timedelta(days=1)
+            await db.commit()
+
+        # Sign with the expired certificate
+        sign_resp = await client.post(
+            f"/api/v1/documents/{doc_id}/sign",
+            json={"certificate_id": cert_id},
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert sign_resp.status_code == 201
+        sig_id = sign_resp.json()["signature_id"]
+
+        # Verify should report expired
+        resp = await client.post(
+            f"/api/v1/documents/{doc_id}/verify/{sig_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_valid"] is False
+        assert data["certificate_status"] == "expired"
+
+    async def test_verify_sig_doc_mismatch_returns_404(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Verifying a signature against a different document returns 404."""
+        # Upload two documents
+        up1 = await _upload_doc(client, auth_token, "doc-a.pdf")
+        up2 = await _upload_doc(client, auth_token, "doc-b.pdf")
+        doc_a = up1.json()["id"]
+        doc_b = up2.json()["id"]
+        await _generate_keys(client, auth_token)
+
+        # Sign doc-a
+        sig_id = await self._sign_and_get_sig_id(client, auth_token, doc_a)
+
+        # Try to verify doc-a's signature against doc-b → 404
+        resp = await client.post(
+            f"/api/v1/documents/{doc_b}/verify/{sig_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 404
+
+    async def test_verify_requires_auth(self, client: AsyncClient):
+        """Unauthenticated verify returns 401."""
+        resp = await client.post("/api/v1/documents/1/verify/1")
+        assert resp.status_code == 401
+
+    async def test_enriched_signatures_list(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Signatures list includes signer_name, signer_email, is_valid, verified_at."""
+        upload = await _upload_doc(client, auth_token, "enriched.pdf")
+        doc_id = upload.json()["id"]
+        await _generate_keys(client, auth_token)
+
+        await self._sign_and_get_sig_id(client, auth_token, doc_id)
+
+        resp = await client.get(
+            f"/api/v1/documents/{doc_id}/signatures",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 200
+        sigs = resp.json()["signatures"]
+        assert len(sigs) >= 1
+        sig = sigs[0]
+        assert "signer_name" in sig
+        assert "signer_email" in sig
+        # Not yet verified — should be null
+        assert sig["is_valid"] is None
+        assert sig["verified_at"] is None
+
+
+@pytest.mark.asyncio
+class TestDocumentIsSigned:
+    """Tests for is_signed indicator on document list."""
+
+    async def test_document_list_includes_is_signed(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Document list items include is_signed boolean."""
+        # Upload one unsigned document
+        up1 = await _upload_doc(client, auth_token, "unsigned.pdf")
+        doc_id = up1.json()["id"]
+
+        # Check list — unsigned → is_signed=false
+        resp = await client.get(
+            "/api/v1/documents",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        unsigned = next((d for d in items if d["id"] == doc_id), None)
+        assert unsigned is not None
+        assert unsigned["is_signed"] is False
+
+        # Sign the document
+        await _generate_keys(client, auth_token)
+        await client.post(
+            f"/api/v1/documents/{doc_id}/sign",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+
+        # Re-check list — signed → is_signed=true
+        resp2 = await client.get(
+            "/api/v1/documents",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp2.status_code == 200
+        items2 = resp2.json()["items"]
+        signed = next((d for d in items2 if d["id"] == doc_id), None)
+        assert signed is not None
+        assert signed["is_signed"] is True

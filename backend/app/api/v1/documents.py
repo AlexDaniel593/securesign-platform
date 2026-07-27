@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Optional
+from typing import Optional, Literal
 
 from fastapi import APIRouter, Body, Depends, File, Query, UploadFile, status
 from fastapi.responses import Response
@@ -32,6 +32,7 @@ class DocumentItem(BaseModel):
     file_size: int
     sha256_hash: str
     uploaded_at: datetime
+    is_signed: bool = False
 
 
 class DocumentListResponse(BaseModel):
@@ -76,10 +77,21 @@ class SignatureItem(BaseModel):
     signature_blob: str
     signed_at: datetime
     is_valid: Optional[bool] = None
+    verified_at: Optional[datetime] = None
+    signer_name: str = ""
+    signer_email: str = ""
 
 
 class SignaturesResponse(BaseModel):
     signatures: list[SignatureItem]
+
+
+class VerificationResult(BaseModel):
+    is_valid: bool
+    verified_at: datetime
+    signer_name: str
+    signer_email: str
+    certificate_status: Literal["valid", "revoked", "expired", "not_found"]
 
 
 # ---------------------------------------------------------------------------
@@ -112,16 +124,7 @@ async def list_documents(
 ):
     items, total = await document_service.list_documents(db, current_user.id, page, limit)
     return DocumentListResponse(
-        items=[
-            DocumentItem(
-                id=doc.id,
-                filename=doc.filename,
-                file_size=doc.file_size,
-                sha256_hash=doc.sha256_hash,
-                uploaded_at=doc.uploaded_at,
-            )
-            for doc in items
-        ],
+        items=[DocumentItem(**doc) for doc in items],
         total=total,
         page=page,
         limit=limit,
@@ -209,6 +212,22 @@ async def list_signatures(
     db: AsyncSession = Depends(get_db),
 ):
     sigs = await document_service.list_signatures(db, current_user.id, doc_id)
+
+    # Fetch signer names/emails (user table) for each signature
+    from sqlmodel import select
+    from app.db.models import User as UserModel
+
+    user_ids = {s.user_id for s in sigs}
+    signer_map: dict[int, tuple[str, str]] = {}
+    if user_ids:
+        result = await db.execute(
+            select(UserModel.id, UserModel.name, UserModel.email).where(
+                UserModel.id.in_(user_ids)
+            )
+        )
+        for row in result.all():
+            signer_map[row[0]] = (row[1], row[2])
+
     return SignaturesResponse(
         signatures=[
             SignatureItem(
@@ -217,7 +236,28 @@ async def list_signatures(
                 signature_blob=s.signature_blob,
                 signed_at=s.signed_at,
                 is_valid=s.is_valid,
+                verified_at=s.verified_at,
+                signer_name=signer_map.get(s.user_id, ("Unknown", ""))[0],
+                signer_email=signer_map.get(s.user_id, ("", "unknown@unknown"))[1],
             )
             for s in sigs
         ]
     )
+
+
+@router.post("/{doc_id}/verify/{sig_id}", response_model=VerificationResult)
+async def verify_signature(
+    doc_id: int,
+    sig_id: int,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Verify a document signature — RSA check + certificate validity.
+
+    Returns VerificationResult with is_valid, verified_at, signer identity
+    and certificate_status. Persists verified_at + is_valid on the Signature row.
+    """
+    result = await document_service.verify_document_signature(
+        db, current_user.id, doc_id, sig_id
+    )
+    return VerificationResult(**result)
