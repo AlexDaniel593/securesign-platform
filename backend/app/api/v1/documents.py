@@ -32,7 +32,7 @@ class DocumentItem(BaseModel):
     file_size: int
     sha256_hash: str
     uploaded_at: datetime
-    is_signed: bool = False
+    signature_count: int = 0
 
 
 class DocumentListResponse(BaseModel):
@@ -138,12 +138,25 @@ async def get_document(
     db: AsyncSession = Depends(get_db),
 ):
     doc = await document_service.get_document(db, current_user.id, doc_id)
+
+    # Compute signature_count for this document across all copies
+    from sqlmodel import select, func
+    from app.db.models import Signature
+
+    count_result = await db.execute(
+        select(func.count()).select_from(Signature).where(
+            Signature.sha256_hash == doc.sha256_hash
+        )
+    )
+    sig_count = count_result.scalar() or 0
+
     return DocumentItem(
         id=doc.id,
         filename=doc.filename,
         file_size=doc.file_size,
         sha256_hash=doc.sha256_hash,
         uploaded_at=doc.uploaded_at,
+        signature_count=sig_count,
     )
 
 

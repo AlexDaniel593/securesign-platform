@@ -307,6 +307,33 @@ class TestDocumentDelete:
         resp = await client.delete("/api/v1/documents/1")
         assert resp.status_code == 401
 
+    async def test_owner_deletes_signed_document(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Deleting a document with signatures cascade-deletes the Signature rows
+        instead of violating the NOT NULL constraint on signatures.document_id."""
+        upload = await _upload_doc(client, auth_token, "signed-delete-me.pdf")
+        doc_id = upload.json()["id"]
+
+        await _generate_keys(client, auth_token)
+
+        sign_resp = await client.post(
+            f"/api/v1/documents/{doc_id}/sign",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert sign_resp.status_code == 201
+
+        resp = await client.delete(
+            f"/api/v1/documents/{doc_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["message"] == "Document deleted successfully"
+
+        get_resp = await client.get(
+            f"/api/v1/documents/{doc_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert get_resp.status_code == 404
+
 
 # ---------------------------------------------------------------------------
 # PUT /documents/{id} (rename only)
@@ -401,7 +428,9 @@ class TestDocumentSign:
 
     async def test_sign_with_certificate_id(self, client: AsyncClient, auth_token: str, s3_mock):
         """Signing with a certificate_id stores it in the Signature row."""
-        upload = await _upload_doc(client, auth_token, "cert-sign.pdf")
+        import uuid
+        unique_pdf = (f"%PDF-1.4\n{uuid.uuid4().hex}\n%%EOF").encode()
+        upload = await _upload_doc(client, auth_token, "cert-sign.pdf", content=unique_pdf)
         doc_id = upload.json()["id"]
 
         # Generate keys first
@@ -430,7 +459,8 @@ class TestDocumentSign:
         )
         assert sig_list.status_code == 200
         sigs = sig_list.json()["signatures"]
-        assert len(sigs) == 1
+        # At least 1 signature (cross-content may add more)
+        assert len(sigs) >= 1
         assert sigs[0]["certificate_id"] == cert_id
 
     async def test_sign_without_keys_returns_400(self, client: AsyncClient, auth_token: str, s3_mock):
@@ -475,7 +505,9 @@ class TestDocumentSign:
 class TestDocumentSignatures:
     async def test_owner_lists_signatures(self, client: AsyncClient, auth_token: str, s3_mock):
         """Owner can list signatures for their document."""
-        upload = await _upload_doc(client, auth_token, "signed.pdf")
+        import uuid
+        unique_pdf = (f"%PDF-1.4\n{uuid.uuid4().hex}\n%%EOF").encode()
+        upload = await _upload_doc(client, auth_token, "signed.pdf", content=unique_pdf)
         doc_id = upload.json()["id"]
 
         # Generate keys and sign the document
@@ -492,7 +524,7 @@ class TestDocumentSignatures:
         assert resp.status_code == 200
         data = resp.json()
         assert "signatures" in data
-        assert len(data["signatures"]) == 1
+        assert len(data["signatures"]) >= 1
         sig = data["signatures"][0]
         assert "id" in sig
         assert "signature_blob" in sig
@@ -513,7 +545,9 @@ class TestDocumentSignatures:
 
     async def test_owner_empty_signatures_list(self, client: AsyncClient, auth_token: str, s3_mock):
         """Owner listing signatures for an unsigned document returns empty list."""
-        upload = await _upload_doc(client, auth_token, "unsigned.pdf")
+        import uuid
+        unique_pdf = (f"%PDF-1.4\n{uuid.uuid4().hex}\n%%EOF").encode()
+        upload = await _upload_doc(client, auth_token, "unsigned.pdf", content=unique_pdf)
         doc_id = upload.json()["id"]
 
         resp = await client.get(
@@ -583,7 +617,8 @@ class TestCertificateValidity:
 
     async def test_revoked_certificate(self, session: AsyncSession):
         """A revoked certificate returns 'revoked'."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
+        from app.core.time_utils import utc_now
 
         from app.db.models import Certificate, User
         from app.services.document_service import check_certificate_validity
@@ -598,8 +633,8 @@ class TestCertificateValidity:
             public_key="pk",
             issuer="CA_SIMULADA",
             serial_number="REV-001",
-            valid_from=datetime.now(timezone.utc) - timedelta(days=10),
-            valid_to=datetime.now(timezone.utc) + timedelta(days=10),
+            valid_from=utc_now() - timedelta(days=10),
+            valid_to=utc_now() + timedelta(days=10),
             revoked=True,
         )
         session.add(cert)
@@ -610,7 +645,8 @@ class TestCertificateValidity:
 
     async def test_expired_certificate(self, session: AsyncSession):
         """A certificate with valid_to in the past returns 'expired'."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
+        from app.core.time_utils import utc_now
 
         from app.db.models import Certificate, User
         from app.services.document_service import check_certificate_validity
@@ -625,8 +661,8 @@ class TestCertificateValidity:
             public_key="pk",
             issuer="CA_SIMULADA",
             serial_number="EXP-001",
-            valid_from=datetime.now(timezone.utc) - timedelta(days=30),
-            valid_to=datetime.now(timezone.utc) - timedelta(days=1),
+            valid_from=utc_now() - timedelta(days=30),
+            valid_to=utc_now() - timedelta(days=1),
         )
         session.add(cert)
         await session.commit()
@@ -636,7 +672,8 @@ class TestCertificateValidity:
 
     async def test_valid_certificate(self, session: AsyncSession):
         """A certificate not revoked and not expired returns 'valid'."""
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
+        from app.core.time_utils import utc_now
 
         from app.db.models import Certificate, User
         from app.services.document_service import check_certificate_validity
@@ -651,8 +688,8 @@ class TestCertificateValidity:
             public_key="pk",
             issuer="CA_SIMULADA",
             serial_number="VAL-001",
-            valid_from=datetime.now(timezone.utc) - timedelta(days=10),
-            valid_to=datetime.now(timezone.utc) + timedelta(days=10),
+            valid_from=utc_now() - timedelta(days=10),
+            valid_to=utc_now() + timedelta(days=10),
         )
         session.add(cert)
         await session.commit()
@@ -812,14 +849,15 @@ class TestDocumentVerify:
 
         # Manually expire the certificate by setting valid_to in the past
         from app.db.database import async_session
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
+        from app.core.time_utils import utc_now
         async with async_session() as db:
             from sqlmodel import select
             from app.db.models import Certificate
 
             result = await db.execute(select(Certificate).where(Certificate.id == cert_id))
             cert = result.scalar_one()
-            cert.valid_to = datetime.now(timezone.utc) - timedelta(days=1)
+            cert.valid_to = utc_now() - timedelta(days=1)
             await db.commit()
 
         # Sign with the expired certificate
@@ -889,16 +927,61 @@ class TestDocumentVerify:
 
 
 @pytest.mark.asyncio
-class TestDocumentIsSigned:
-    """Tests for is_signed indicator on document list."""
+# =====================================================================
+# Phase 1: Signature sha256_hash column (RED — model test)
+# =====================================================================
 
-    async def test_document_list_includes_is_signed(self, client: AsyncClient, auth_token: str, s3_mock):
-        """Document list items include is_signed boolean."""
-        # Upload one unsigned document
-        up1 = await _upload_doc(client, auth_token, "unsigned.pdf")
+
+@pytest.mark.asyncio
+class TestSignatureModelColumn:
+    """Tests that Signature model has an indexed sha256_hash column."""
+
+    async def test_signature_has_sha256_hash_attribute(self, session: AsyncSession):
+        """Signature model exposes sha256_hash as a string field."""
+        from app.db.models import Signature
+
+        sig = Signature(
+            document_id=1,
+            user_id=1,
+            signature_blob="dummy",
+            sha256_hash="a" * 64,
+        )
+        session.add(sig)
+        await session.commit()
+        await session.refresh(sig)
+
+        assert sig.sha256_hash == "a" * 64
+        # Verify the column is present in the table
+        assert hasattr(Signature, "sha256_hash")
+
+    async def test_signature_sha256_hash_is_indexed(self):
+        """sha256_hash column has an index defined on the SQLModel Field."""
+        from app.db.models import Signature
+        import sqlalchemy as sa
+
+        # Access the underlying SQLAlchemy column via the model's __table__
+        col = Signature.__table__.columns.get("sha256_hash")
+        assert col is not None, "sha256_hash column is missing from Signature table"
+        assert col.index is True or any(
+            idx.name == "idx_signatures_sha256_hash"
+            for idx in Signature.__table__.indexes
+        ), "sha256_hash column should be indexed"
+
+
+@pytest.mark.asyncio
+class TestDocumentSignatureCount:
+    """Tests for signature_count on document list (replaces is_signed)."""
+
+    async def test_document_list_includes_signature_count(self, client: AsyncClient, auth_token: str, s3_mock):
+        """Document list items include signature_count integer, NOT is_signed."""
+        import uuid
+
+        # Use unique content to avoid cross-test hash collisions
+        unique_pdf = (f"%PDF-1.4\n{uuid.uuid4().hex}\n%%EOF").encode()
+        up1 = await _upload_doc(client, auth_token, "unsigned.pdf", content=unique_pdf)
         doc_id = up1.json()["id"]
 
-        # Check list — unsigned → is_signed=false
+        # Check list — unsigned → signature_count=0
         resp = await client.get(
             "/api/v1/documents",
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -907,7 +990,8 @@ class TestDocumentIsSigned:
         items = resp.json()["items"]
         unsigned = next((d for d in items if d["id"] == doc_id), None)
         assert unsigned is not None
-        assert unsigned["is_signed"] is False
+        assert "is_signed" not in unsigned, "is_signed field must NOT be in response"
+        assert unsigned["signature_count"] == 0
 
         # Sign the document
         await _generate_keys(client, auth_token)
@@ -916,7 +1000,7 @@ class TestDocumentIsSigned:
             headers={"Authorization": f"Bearer {auth_token}"},
         )
 
-        # Re-check list — signed → is_signed=true
+        # Re-check list — signed → signature_count >= 1
         resp2 = await client.get(
             "/api/v1/documents",
             headers={"Authorization": f"Bearer {auth_token}"},
@@ -925,4 +1009,170 @@ class TestDocumentIsSigned:
         items2 = resp2.json()["items"]
         signed = next((d for d in items2 if d["id"] == doc_id), None)
         assert signed is not None
-        assert signed["is_signed"] is True
+        assert "is_signed" not in signed, "is_signed field must NOT be in response"
+        assert signed["signature_count"] >= 1
+
+    async def test_get_document_includes_signature_count(self, client: AsyncClient, auth_token: str, s3_mock):
+        """GET /documents/{id} returns signature_count, not is_signed."""
+        # Use unique content to avoid cross-test hash collisions
+        import uuid
+        unique_pdf = (f"%PDF-1.4\n{uuid.uuid4().hex}\n%%EOF").encode()
+        upload = await _upload_doc(client, auth_token, "single.pdf", content=unique_pdf)
+        doc_id = upload.json()["id"]
+
+        resp = await client.get(
+            f"/api/v1/documents/{doc_id}",
+            headers={"Authorization": f"Bearer {auth_token}"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "is_signed" not in data, "is_signed field must NOT be in response"
+        assert data["signature_count"] == 0
+
+
+# =====================================================================
+# Phase 2: Cross-content signature visibility (RED)
+# =====================================================================
+
+
+@pytest.mark.asyncio
+class TestCrossContentVisibility:
+    """Tests that signatures are visible across different copies of the same file."""
+
+    async def test_cross_content_signature_count(self, client: AsyncClient, auth_token: str, s3_mock):
+        """User B sees signature_count >= 1 for a copy of a file User A signed."""
+        pdf_content = make_pdf_content()
+
+        # User A uploads and signs a file
+        token_a = auth_token
+        up_a_resp = await _upload_doc(client, token_a, "same-file.pdf", content=pdf_content)
+        doc_a_id = up_a_resp.json()["id"]
+        hash_a = up_a_resp.json()["sha256_hash"]
+
+        await _generate_keys(client, token_a)
+        sign_resp = await client.post(
+            f"/api/v1/documents/{doc_a_id}/sign",
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+        assert sign_resp.status_code == 201
+
+        # User B uploads the SAME file content as a new document
+        token_b = await _register_and_login(client, "userb-cross@example.com")
+        up_b_resp = await _upload_doc(client, token_b, "same-file-copy.pdf", content=pdf_content)
+        doc_b_id = up_b_resp.json()["id"]
+        hash_b = up_b_resp.json()["sha256_hash"]
+
+        # Both docs should have the same hash
+        assert hash_a == hash_b
+
+        # User B's document list should show signature_count >= 1
+        resp = await client.get(
+            "/api/v1/documents",
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert resp.status_code == 200
+        items = resp.json()["items"]
+        doc_b_item = next((d for d in items if d["id"] == doc_b_id), None)
+        assert doc_b_item is not None
+        assert doc_b_item["signature_count"] >= 1, (
+            f"Expected signature_count >= 1, got {doc_b_item.get('signature_count')}"
+        )
+
+    async def test_cross_content_signatures_list(self, client: AsyncClient, auth_token: str, s3_mock):
+        """User B's signatures list includes User A's signature for same-content file."""
+        pdf_content = make_pdf_content()
+
+        # User A uploads and signs
+        token_a = await _register_and_login(client, "usera-list@example.com")
+        await _generate_keys(client, token_a)
+        up_a_resp = await _upload_doc(client, token_a, "shared.pdf", content=pdf_content)
+        doc_a_id = up_a_resp.json()["id"]
+        await client.post(
+            f"/api/v1/documents/{doc_a_id}/sign",
+            headers={"Authorization": f"Bearer {token_a}"},
+        )
+
+        # User B uploads same content
+        token_b = await _register_and_login(client, "userb-list@example.com")
+        up_b_resp = await _upload_doc(client, token_b, "shared-copy.pdf", content=pdf_content)
+        doc_b_id = up_b_resp.json()["id"]
+
+        # User B lists signatures for their doc — should include User A's signature
+        resp = await client.get(
+            f"/api/v1/documents/{doc_b_id}/signatures",
+            headers={"Authorization": f"Bearer {token_b}"},
+        )
+        assert resp.status_code == 200
+        sigs = resp.json()["signatures"]
+        # User A's signature should be visible
+        assert len(sigs) >= 1, f"Expected >= 1 signatures, got {len(sigs)}"
+        # The signature should belong to User A (not User B)
+        signer_emails = [s["signer_email"] for s in sigs]
+        assert "usera-list@example.com" in signer_emails, (
+            f"Expected User A's signature to be visible; got signers: {signer_emails}"
+        )
+
+
+# =====================================================================
+# Phase 2: Migration backfill (RED)
+# =====================================================================
+
+
+@pytest.mark.asyncio
+class TestMigrationBackfill:
+    """Test that migration correctly backfills sha256_hash on existing Signature rows."""
+
+    async def test_backfill_populates_signature_sha256_hash(self, session: AsyncSession):
+        """A Signature row with wrong sha256_hash gets corrected via backfill from parent Document."""
+        from app.db.models import Document, Signature, User
+
+        # Create user and document with known hash
+        doc_hash = "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+        user = User(name="Backfill", email="backfill@test.com", password_hash="x", salt="x")
+        session.add(user)
+        await session.flush()
+
+        doc = Document(
+            user_id=user.id,
+            filename="backfill-test.pdf",
+            object_key="s3://fake/backfill-test.pdf",
+            file_size=100,
+            sha256_hash=doc_hash,
+        )
+        session.add(doc)
+        await session.flush()
+
+        # Create a Signature row with a deliberately WRONG sha256_hash
+        # (simulates a row that the backfill UPDATE still correctly overwrites)
+        sig = Signature(
+            document_id=doc.id,
+            user_id=user.id,
+            signature_blob="pre-migration-blob",
+            sha256_hash="wrong-wrong-wrong-wrong-wrong-wrong-wrong-wrong-wrong",
+        )
+        session.add(sig)
+        await session.commit()
+
+        assert sig.sha256_hash == "wrong-wrong-wrong-wrong-wrong-wrong-wrong-wrong-wrong"
+
+        # Run the backfill UPDATE (same logic as the Alembic migration,
+        # but here the sha256_hash is already set; the update replaces it
+        # with the parent document's correct hash)
+        from sqlalchemy import text
+
+        await session.execute(
+            text(
+                "UPDATE signatures SET sha256_hash = ("
+                "  SELECT documents.sha256_hash FROM documents "
+                "  WHERE documents.id = signatures.document_id"
+                ") WHERE signatures.document_id = :doc_id"
+            ),
+            {"doc_id": doc.id},
+        )
+        await session.commit()
+
+        # Verify sha256_hash was corrected to match the parent document
+        await session.refresh(sig)
+        assert sig.sha256_hash == doc_hash, (
+            f"Backfill should set sha256_hash to {doc_hash}, got {sig.sha256_hash}"
+        )

@@ -4,16 +4,15 @@ Storage operations are delegated to app.core.storage (async boto3 S3 client).
 Ownership enforcement, validation, and signing remain application-layer concerns.
 """
 
-from datetime import datetime, timezone
 from typing import Optional
 
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.sql import exists as sa_exists
 from sqlmodel import func, select
 
 from app.core import storage
 from app.core.crypto import hash_sha256
+from app.core.time_utils import utc_now
 from app.db.models import Document, Signature, Certificate, User
 from app.services import crypto_service
 
@@ -58,15 +57,21 @@ async def list_documents(
 ) -> tuple[list[dict], int]:
     """Return a page of documents owned by *user_id* and the total count.
 
-    Each document dict includes an ``is_signed`` boolean computed via an
-    EXISTS subquery on the signatures table (no N+1, no eager load).
+    Each document dict includes a ``signature_count`` integer computed via a
+    scalar subquery on ``signatures.sha256_hash`` — no N+1, no eager load.
+    Replaces the previous ``is_signed`` EXISTS subquery keyed on document_id.
     """
-    has_sig = sa_exists().where(
-        Signature.document_id == Document.id
+    sig_count = (
+        select(func.count())
+        .select_from(Signature)
+        .where(Signature.sha256_hash == Document.sha256_hash)
+        .correlate(Document)
+        .scalar_subquery()
+        .label("signature_count")
     )
 
     base_query = (
-        select(Document, has_sig.label("is_signed"))
+        select(Document, sig_count)
         .where(Document.user_id == user_id)
     )
     count_query = select(func.count()).select_from(Document).where(Document.user_id == user_id)
@@ -81,14 +86,14 @@ async def list_documents(
     rows = result.all()
 
     documents = []
-    for doc, is_signed in rows:
+    for doc, signature_count in rows:
         doc_dict = {
             "id": doc.id,
             "filename": doc.filename,
             "file_size": doc.file_size,
             "sha256_hash": doc.sha256_hash,
             "uploaded_at": doc.uploaded_at,
-            "is_signed": bool(is_signed),
+            "signature_count": signature_count,
         }
         documents.append(doc_dict)
     return documents, total
@@ -167,6 +172,7 @@ async def sign_document(
         document_id=doc.id,
         user_id=user_id,
         certificate_id=certificate_id,
+        sha256_hash=doc.sha256_hash,
         signature_blob=result["signature"],
     )
     db.add(signature)
@@ -180,13 +186,14 @@ async def list_signatures(
 ) -> list[Signature]:
     """List all signatures for a document owned by *user_id*.
 
-    Ownership check on the document, but no user_id filter on signatures —
-    owner may view signatures from all signers (including co-signers).
+    Ownership check on the document row, then query signatures by
+    sha256_hash so the owner sees all signers across copies of the
+    same content.
     """
-    await get_document(db, user_id, doc_id)  # ownership check
+    doc = await get_document(db, user_id, doc_id)  # ownership check
     result = await db.execute(
         select(Signature).where(
-            Signature.document_id == doc_id,
+            Signature.sha256_hash == doc.sha256_hash,
         ).order_by(Signature.signed_at.desc())
     )
     return list(result.scalars().all())
@@ -250,7 +257,7 @@ async def verify_document_signature(
     is_valid = crypto_ok and cert_ok
 
     # 7. Persist verified_at + is_valid
-    sig.verified_at = datetime.now(timezone.utc)
+    sig.verified_at = utc_now()
     sig.is_valid = is_valid
     db.add(sig)
     await db.commit()
@@ -305,12 +312,8 @@ async def check_certificate_validity(db: AsyncSession, cert_id: Optional[int]) -
     if cert.revoked:
         return "revoked"
 
-    now = datetime.now(timezone.utc)
-    # cert.valid_to may be naive or aware depending on storage; normalize to UTC
-    valid_to = cert.valid_to
-    if valid_to.tzinfo is None:
-        valid_to = valid_to.replace(tzinfo=timezone.utc)
-    if valid_to < now:
+    now = utc_now()
+    if cert.valid_to < now:
         return "expired"
 
     return "valid"
