@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select, func
 
 from app.core.ca import issue_certificate as ca_issue, verify_certificate_pem
+from app.core.time_utils import to_naive_utc, utc_now
 from app.db.database import get_db
 from app.db.models import Certificate, UserKey
 from app.dependencies.auth import get_current_user
@@ -115,8 +116,8 @@ async def issue(
         public_key=user_key.public_key,
         issuer=cert_data["issuer"],
         serial_number=cert_data["serial_number"],
-        valid_from=cert_data["valid_from"],
-        valid_to=cert_data["valid_to"],
+        valid_from=to_naive_utc(cert_data["valid_from"]),
+        valid_to=to_naive_utc(cert_data["valid_to"]),
     )
     db.add(certificate)
     await db.commit()
@@ -221,7 +222,7 @@ async def revoke_certificate(
             detail="Certificate is already revoked",
         )
 
-    now = datetime.now(timezone.utc)
+    now = utc_now()
     cert.revoked = True
     cert.revoked_at = now
     cert.revocation_reason = body.reason
@@ -266,7 +267,7 @@ async def check_certificate(
             detail="Certificate not found",
         )
 
-    now = datetime.utcnow()
+    now = utc_now()
 
     if cert.revoked:
         return CheckResponse(valid=False, status="revoked")

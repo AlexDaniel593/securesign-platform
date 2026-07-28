@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import router as v1_router
+from app.core import storage
 from app.core.config import settings
 from app.db.database import init_db
 
@@ -11,6 +12,7 @@ from app.db.database import init_db
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    await storage.ensure_bucket_exists()
     yield
 
 

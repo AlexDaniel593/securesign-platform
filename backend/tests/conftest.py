@@ -5,6 +5,11 @@ os.environ["SECRET_KEY"] = "test-secret-key-for-testing-only"
 os.environ["AES_KEY"] = "01" * 32
 os.environ["DEBUG"] = "false"
 os.environ["JWT_EXPIRATION_MINUTES"] = "60"
+os.environ["MINIO_ENDPOINT"] = ""
+os.environ["MINIO_ACCESS_KEY"] = "test"
+os.environ["MINIO_SECRET_KEY"] = "test"
+os.environ["MINIO_BUCKET_NAME"] = "test-bucket"
+os.environ["MINIO_SECURE"] = "false"
 
 import asyncio
 from pathlib import Path
@@ -16,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlmodel import SQLModel
 
+import app.db.models  # noqa: F401 — registers all SQLModel tables in metadata
 from app.core.config import settings
 from app.core.rate_limiter import login_rate_limiter
 
@@ -23,6 +29,11 @@ settings.DATABASE_URL = "sqlite+aiosqlite:///./test.db"
 settings.SECRET_KEY = "test-secret-key-for-testing-only"
 settings.AES_KEY = "01" * 32
 settings.DEBUG = False
+settings.MINIO_ENDPOINT = ""
+settings.MINIO_ACCESS_KEY = "test"
+settings.MINIO_SECRET_KEY = "test"
+settings.MINIO_BUCKET_NAME = "test-bucket"
+settings.MINIO_SECURE = False
 
 TEST_DB = Path(__file__).parent / "test.db"
 
@@ -97,6 +108,43 @@ async def auth_token(client: AsyncClient):
         json={"email": email, "password": password},
     )
     return resp.json()["access_token"]
+
+
+@pytest.fixture(autouse=True)
+def s3_mock(monkeypatch):
+    """Mock S3 at the botocore layer with moto — no real MinIO needed.
+
+    Sets env vars + settings attributes so app.core.storage._get_client()
+    talks to the in-memory mock. Clears lru_cache before and after to ensure
+    the storage client is constructed inside the mock context.
+    """
+    from moto import mock_aws
+
+    monkeypatch.setenv("MINIO_ENDPOINT", "")
+    monkeypatch.setenv("MINIO_ACCESS_KEY", "test")
+    monkeypatch.setenv("MINIO_SECRET_KEY", "test")
+    monkeypatch.setenv("MINIO_BUCKET_NAME", "test-bucket")
+    monkeypatch.setenv("MINIO_SECURE", "false")
+
+    from app.core.config import settings
+
+    settings.MINIO_ENDPOINT = ""
+    settings.MINIO_ACCESS_KEY = "test"
+    settings.MINIO_SECRET_KEY = "test"
+    settings.MINIO_BUCKET_NAME = "test-bucket"
+    settings.MINIO_SECURE = False
+
+    with mock_aws():
+        import boto3
+
+        s3 = boto3.client("s3", region_name="us-east-1")
+        s3.create_bucket(Bucket="test-bucket")
+
+        from app.core import storage
+
+        storage._get_client.cache_clear()
+        yield s3
+        storage._get_client.cache_clear()
 
 
 @pytest_asyncio.fixture(autouse=True)
