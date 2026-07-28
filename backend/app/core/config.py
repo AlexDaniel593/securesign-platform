@@ -23,6 +23,12 @@ class Settings(BaseSettings):
     CA_COMMON_NAME: str = "CA_SIMULADA"
     CA_VALIDITY_DAYS: int = 365
 
+    MINIO_ENDPOINT: str = "http://localhost:9000"
+    MINIO_ACCESS_KEY: str = "minioadmin"
+    MINIO_SECRET_KEY: str = "minioadmin"
+    MINIO_BUCKET_NAME: str = "securesign-documents"
+    MINIO_SECURE: bool = False
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
