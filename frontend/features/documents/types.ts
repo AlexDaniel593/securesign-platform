@@ -14,7 +14,7 @@ export interface DocumentListResponse {
   limit: number
 }
 
-// eslint-disable-next-line @typescript-eslint/no-empty-interface
+ 
 export interface UploadResponse extends DocumentItem {}
 
 export interface RenameRequest {
