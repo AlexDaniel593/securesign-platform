@@ -41,3 +41,11 @@ docker-compose.override.yml
 coverage.xml
 *.coverage
 backend/test.db
+backend/test*.db
+testbd
+
+# Uploaded documents
+uploads/
+
+# Agent artifacts
+.atl/
