@@ -20,7 +20,7 @@ repos:
     hooks:
       - id: eslint
         name: ESLint Code Quality
-        entry: cmd /c "cd frontend && npx eslint . --fix --max-warnings=0"
+        entry: npm --prefix frontend run lint -- . --fix --max-warnings=0
         language: system
         files: ^frontend/.*\.(js|jsx|ts|tsx)$
         pass_filenames: false
