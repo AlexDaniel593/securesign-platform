@@ -16,6 +16,12 @@ from app.core.time_utils import utc_now
 from app.db.models import Document, Signature, Certificate, User
 from app.services import crypto_service
 
+
+def hash_content(data: bytes) -> str:
+    """Public helper to compute a SHA-256 hex digest from raw bytes."""
+    return hash_sha256(data)
+
+
 MAX_UPLOAD_SIZE: int = 10 * 1024 * 1024  # 10 MB
 
 
@@ -115,11 +121,11 @@ async def get_document(db: AsyncSession, user_id: int, doc_id: int) -> Document:
 
 async def get_document_bytes(
     db: AsyncSession, user_id: int, doc_id: int
-) -> tuple[bytes, str]:
-    """Return the raw file bytes and filename for a document owned by *user_id*."""
+) -> tuple[bytes, str, str]:
+    """Return the raw file bytes, filename, and SHA-256 hash for a document owned by *user_id*."""
     doc = await get_document(db, user_id, doc_id)
     content = await storage.download_object(doc.object_key)
-    return content, doc.filename
+    return content, doc.filename, doc.sha256_hash
 
 
 # ---------------------------------------------------------------------------
@@ -317,3 +323,58 @@ async def check_certificate_validity(db: AsyncSession, cert_id: Optional[int]) -
         return "expired"
 
     return "valid"
+
+
+async def verify_document_by_hash(db: AsyncSession, sha256_hash: str) -> list[dict]:
+    """Find all signatures for a document hash, verify each (RSA + cert), return results.
+
+    Read-only — does NOT persist ``verified_at`` or ``is_valid`` on any row.
+    """
+    result = await db.execute(
+        select(Signature).where(
+            Signature.sha256_hash == sha256_hash,
+        ).order_by(Signature.signed_at.desc())
+    )
+    sigs = list(result.scalars().all())
+
+    if not sigs:
+        return []
+
+    # Fetch signer identities
+    user_ids = {s.user_id for s in sigs}
+    signer_map: dict[int, tuple[str, str]] = {}
+    if user_ids:
+        user_result = await db.execute(
+            select(User).where(User.id.in_(user_ids))
+        )
+        for row in user_result.scalars().all():
+            signer_map[row.id] = (row.name, row.email)
+
+    now = utc_now()
+    results: list[dict] = []
+    for sig in sigs:
+        try:
+            public_key_pem = await crypto_service.get_public_key_for_user(db, sig.user_id)
+        except ValueError:
+            continue
+
+        crypto_ok = crypto_service.verify_signature(
+            sha256_hash, sig.signature_blob, public_key_pem
+        )["valid"]
+
+        cert_status = await check_certificate_validity(db, sig.certificate_id)
+        cert_ok = cert_status in ("valid", "not_found")
+
+        signer_name, signer_email = signer_map.get(sig.user_id, ("Unknown", "unknown@unknown"))
+
+        results.append({
+            "id": sig.id,
+            "signed_at": sig.signed_at,
+            "is_valid": crypto_ok and cert_ok,
+            "verified_at": now,
+            "signer_name": signer_name,
+            "signer_email": signer_email,
+            "certificate_status": cert_status,
+        })
+
+    return results

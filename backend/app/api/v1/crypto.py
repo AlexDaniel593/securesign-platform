@@ -71,6 +71,7 @@ class KeyStatusResponse(BaseModel):
 
 class KeyGenerateResponse(BaseModel):
     fingerprint: str
+    public_key: str
     message: str
 
 

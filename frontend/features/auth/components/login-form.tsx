@@ -5,11 +5,12 @@ import { parseWithZod } from "@conform-to/zod"
 import { z } from "zod"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Loader2, Lock, Mail } from "lucide-react"
+import { Eye, EyeOff, Loader2, Lock, Mail } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { login } from "@/features/auth/services/auth-service"
+import { setToken } from "@/lib/auth"
 import { useState } from "react"
 
 const schema = z.object({
@@ -32,7 +33,7 @@ export function LoginForm() {
 
       login(data)
         .then((res) => {
-          document.cookie = `token=${res.access_token}; path=/; max-age=86400; samesite=lax`
+          setToken(res.access_token)
           toast.success("Sesión iniciada correctamente")
           router.push("/dashboard")
         })
@@ -42,6 +43,8 @@ export function LoginForm() {
         .finally(() => setIsPending(false))
     },
   })
+
+  const [showPassword, setShowPassword] = useState(false)
 
   return (
     <form id={form.id} onSubmit={form.onSubmit} noValidate className="space-y-4">
@@ -71,11 +74,19 @@ export function LoginForm() {
             <Input
               id={fields.password.id}
               name={fields.password.name}
-              type="password"
+              type={showPassword ? "text" : "password"}
               placeholder="••••••••"
-              className="pl-10"
+              className="pl-10 pr-10"
               defaultValue={fields.password.initialValue}
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              tabIndex={-1}
+            >
+              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
           </div>
           {fields.password.errors && (
             <p className="text-sm text-destructive">{fields.password.errors}</p>

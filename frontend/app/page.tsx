@@ -1,6 +1,6 @@
-import Link from "next/link"
-import { Button } from "@/components/ui/button"
-import { KeyRound, FileSignature, Shield, ArrowRight } from "lucide-react"
+import { KeyRound, FileSignature, Shield } from "lucide-react"
+import { HeaderActions } from "@/features/auth/components/header-actions"
+import { VerifySection } from "@/features/documents/components/verify-section"
 
 const features = [
   {
@@ -11,12 +11,12 @@ const features = [
   {
     icon: FileSignature,
     title: "Firma Digital",
-    description: "Firma documentos electrónicos y verifica firmas con certificados digitales.",
+    description: "Firma documentos electronicos y verifica firmas con certificados digitales.",
   },
   {
     icon: Shield,
     title: "Certificados",
-    description: "Administra certificados digitales X.509 con validez jurídica.",
+    description: "Administra certificados digitales X.509 con validez juridica.",
   },
 ]
 
@@ -30,12 +30,7 @@ export default function HomePage() {
             <span className="text-xl font-bold text-primary">SecureSign</span>
           </div>
           <nav className="flex items-center gap-4">
-            <Link href="/login">
-              <Button variant="ghost">Iniciar sesión</Button>
-            </Link>
-            <Link href="/register">
-              <Button>Crear cuenta</Button>
-            </Link>
+            <HeaderActions />
           </nav>
         </div>
       </header>
@@ -46,22 +41,14 @@ export default function HomePage() {
             Plataforma de Firma Digital
           </h1>
           <p className="mx-auto mt-4 max-w-2xl text-lg text-muted-foreground">
-            SecureSign te permite firmar documentos electrónicos, gestionar
-            certificados digitales y realizar operaciones criptográficas de
+            SecureSign te permite firmar documentos electronicos, gestionar
+            certificados digitales y realizar operaciones criptograficas de
             forma segura y con validez legal.
           </p>
           <div className="mt-8 flex items-center justify-center gap-4">
-            <Link href="/register">
-              <Button size="lg">
-                Comenzar ahora
-                <ArrowRight className="ml-2 size-4" />
-              </Button>
-            </Link>
-            <Link href="/login">
-              <Button variant="outline" size="lg">
-                <span className="text-black">Ya tengo cuenta</span>
-              </Button>
-            </Link>
+            <p className="text-sm text-muted-foreground">
+              Usa el menu en la esquina superior derecha para iniciar sesion o crear una cuenta.
+            </p>
           </div>
         </section>
 
@@ -84,6 +71,12 @@ export default function HomePage() {
                 </div>
               ))}
             </div>
+          </div>
+        </section>
+
+        <section className="border-t py-20">
+          <div className="mx-auto max-w-xl px-4">
+            <VerifySection />
           </div>
         </section>
       </main>

@@ -1,10 +1,9 @@
 "use client"
 
-import { useForm } from "@conform-to/react"
-import { parseWithZod } from "@conform-to/zod"
-import { z } from "zod"
+import { useState, useCallback, useRef } from "react"
+import { DndContext, useDroppable } from "@dnd-kit/core"
 import { toast } from "sonner"
-import { Loader2, Upload } from "lucide-react"
+import { Loader2, Upload, FileText } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import {
   Card,
@@ -14,54 +13,115 @@ import {
   CardTitle,
 } from "@/components/ui/card"
 import { uploadDocument } from "@/features/documents/services/documents-service"
-import { useRef, useState } from "react"
+import { cn } from "@/lib/utils"
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10 MB
-
-const schema = z.object({
-  file: z.instanceof(File, { message: "Selecciona un archivo PDF" }),
-})
 
 interface UploadSectionProps {
   onUploadSuccess: () => void
 }
 
+function DropZone({ onFile }: { onFile: (file: File) => void }) {
+  const [isDragOver, setIsDragOver] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+  const { setNodeRef, isOver } = useDroppable({ id: "upload-drop" })
+
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(true)
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setIsDragOver(false)
+  }, [])
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault()
+      e.stopPropagation()
+      setIsDragOver(false)
+
+      const file = e.dataTransfer.files?.[0]
+      if (file) onFile(file)
+    },
+    [onFile]
+  )
+
+  const handleFileChange = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0]
+      if (file) onFile(file)
+    },
+    [onFile]
+  )
+
+  const active = isOver || isDragOver
+
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".pdf"
+        className="hidden"
+        onChange={handleFileChange}
+      />
+      <div
+        ref={setNodeRef}
+        onDragOver={handleDragOver}
+        onDragLeave={handleDragLeave}
+        onDrop={handleDrop}
+        onClick={() => inputRef.current?.click()}
+        className={cn(
+          "flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed p-8 transition-colors",
+          active
+            ? "border-primary bg-primary/5"
+            : "border-muted-foreground/25 hover:border-muted-foreground/50"
+        )}
+      >
+        <Upload className={cn("mb-2 size-8", active ? "text-primary" : "text-muted-foreground")} />
+        <p className="text-sm font-medium">
+          {active ? "Suelta el archivo aquí" : "Arrastra tu PDF aquí"}
+        </p>
+        <p className="mt-1 text-xs text-muted-foreground">o haz clic para seleccionar (máx. 10 MB)</p>
+      </div>
+    </>
+  )
+}
+
 export function UploadSection({ onUploadSuccess }: UploadSectionProps) {
   const [isPending, setIsPending] = useState(false)
-  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [selectedFile, setSelectedFile] = useState<File | null>(null)
 
-  const [form, fields] = useForm({
-    onValidate({ formData }) {
-      return parseWithZod(formData, { schema })
-    },
-    onSubmit(event, { formData }) {
-      event.preventDefault()
-      const file = formData.get("file") as File | null
+  const handleFile = useCallback((file: File) => {
+    if (file.type !== "application/pdf") {
+      toast.error("Solo se permiten archivos PDF")
+      return
+    }
+    if (file.size > MAX_FILE_SIZE) {
+      toast.error("El archivo excede el límite de 10 MB")
+      return
+    }
+    setSelectedFile(file)
+  }, [])
 
-      // Client-side 10 MB guard — checked before any network request
-      if (file && file.size > MAX_FILE_SIZE) {
-        toast.error("El archivo excede el límite de 10 MB")
-        return
-      }
-
-      if (!file) return
-
-      setIsPending(true)
-      uploadDocument(file)
-        .then(() => {
-          toast.success("Documento subido correctamente")
-          onUploadSuccess()
-          // Reset the file input
-          if (fileInputRef.current) {
-            fileInputRef.current.value = ""
-          }
-        })
-        .catch((err: Error) => {
-          toast.error(err.message)
-        })
-        .finally(() => setIsPending(false))
-    },
-  })
+  const handleUpload = async () => {
+    if (!selectedFile) return
+    setIsPending(true)
+    try {
+      await uploadDocument(selectedFile)
+      toast.success("Documento subido correctamente")
+      setSelectedFile(null)
+      onUploadSuccess()
+    } catch (err) {
+      toast.error((err as Error).message)
+    } finally {
+      setIsPending(false)
+    }
+  }
 
   return (
     <Card>
@@ -70,36 +130,29 @@ export function UploadSection({ onUploadSuccess }: UploadSectionProps) {
           <Upload className="size-5" /> Subir Documento
         </CardTitle>
         <CardDescription>
-          Selecciona un archivo PDF (máx. 10 MB)
+          Arrastra un archivo PDF o haz clic para seleccionarlo (máx. 10 MB)
         </CardDescription>
       </CardHeader>
-      <CardContent>
-        <form id={form.id} onSubmit={form.onSubmit} noValidate>
-          <fieldset disabled={isPending} className="space-y-4">
-            <div className="space-y-2">
-              <input
-                ref={fileInputRef}
-                id={fields.file.id}
-                name={fields.file.name}
-                type="file"
-                accept=".pdf"
-                className="block w-full text-sm text-muted-foreground
-                  file:mr-4 file:rounded-md file:border-0
-                  file:bg-primary file:px-4 file:py-2
-                  file:text-sm file:font-semibold file:text-primary-foreground
-                  hover:file:bg-primary/90"
-              />
-              {fields.file.errors && (
-                <p className="text-sm text-destructive">{fields.file.errors}</p>
-              )}
-            </div>
+      <CardContent className="space-y-4">
+        <DndContext>
+          <DropZone onFile={handleFile} />
+        </DndContext>
 
-            <Button type="submit" disabled={isPending}>
-              {isPending && <Loader2 className="size-4 mr-2 animate-spin" />}
-              {isPending ? "Subiendo..." : "Subir Documento"}
+        {selectedFile && (
+          <div className="flex items-center gap-3 rounded-md bg-muted p-3">
+            <FileText className="size-5 text-muted-foreground shrink-0" />
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-sm font-medium">{selectedFile.name}</p>
+              <p className="text-xs text-muted-foreground">
+                {(selectedFile.size / 1024 / 1024).toFixed(2)} MB
+              </p>
+            </div>
+            <Button onClick={handleUpload} disabled={isPending} size="sm">
+              {isPending && <Loader2 className="size-4 mr-1 animate-spin" />}
+              {isPending ? "Subiendo..." : "Subir"}
             </Button>
-          </fieldset>
-        </form>
+          </div>
+        )}
       </CardContent>
     </Card>
   )

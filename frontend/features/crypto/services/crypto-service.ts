@@ -12,22 +12,21 @@ import type {
   DecryptRequest,
   DecryptResponse,
 } from "@/features/crypto/types"
+import { getToken } from "@/lib/auth"
+import { translateError } from "@/lib/errors"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"
 
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: "Request failed" }))
-    throw new Error(error.detail ?? error.message ?? "An unexpected error occurred")
+    throw new Error(translateError(error.detail ?? error.message ?? "An unexpected error occurred"))
   }
   return response.json()
 }
 
 function authHeaders(): Record<string, string> {
-  const token = document.cookie
-    .split("; ")
-    .find((row) => row.startsWith("token="))
-    ?.split("=")[1]
+  const token = getToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
