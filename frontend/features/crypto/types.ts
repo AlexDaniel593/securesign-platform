@@ -16,6 +16,7 @@ export interface KeyStatusResponse {
 
 export interface KeyGenerateResponse {
   fingerprint: string
+  public_key: string
   message: string
 }
 
