@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     MINIO_BUCKET_NAME: str = "securesign-documents"
     MINIO_SECURE: bool = False
 
+    ADMIN_EMAIL: str = "admin@securesign.com"
+    ADMIN_PASSWORD: str = "Admin123!"
+    ADMIN_NAME: str = "Administrador"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

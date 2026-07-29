@@ -22,8 +22,8 @@ export function RevokeButton({
   async function handleRevoke() {
     setIsPending(true)
     try {
-      const res = await revoke(certificateId, reason ? { reason } : undefined)
-      toast.success(res.message)
+      await revoke(certificateId, reason ? { reason } : undefined)
+      toast.success("Certificado revocado correctamente")
       onRevoked?.()
     } catch (err) {
       toast.error((err as Error).message)
