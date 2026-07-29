@@ -104,7 +104,10 @@ export function DocumentRow({
       const url = URL.createObjectURL(blob)
       const anchor = window.document.createElement("a")
       anchor.href = url
-      anchor.download = document.filename
+      const dot = document.filename.lastIndexOf(".")
+      const name = dot !== -1 ? document.filename.slice(0, dot) : document.filename
+      const ext = dot !== -1 ? document.filename.slice(dot) : ""
+      anchor.download = document.signature_count > 0 ? `${name}-signed${ext}` : document.filename
       window.document.body.appendChild(anchor)
       anchor.click()
       window.document.body.removeChild(anchor)

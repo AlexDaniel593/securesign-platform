@@ -15,6 +15,7 @@ from app.core.security import (
 from app.db.database import get_db
 from app.db.models import User
 from app.dependencies.auth import get_current_user
+from app.services.audit_service import log_action
 from app.utils.validators import validate_password_strength
 
 router = APIRouter()
@@ -75,6 +76,7 @@ class MessageResponse(BaseModel):
 
 @router.post("/register", response_model=TokenResponse, status_code=status.HTTP_201_CREATED)
 async def register(
+    request: Request,
     body: RegisterRequest,
     db: AsyncSession = Depends(get_db),
 ):
@@ -100,6 +102,14 @@ async def register(
     await db.refresh(user)
 
     access_token = create_access_token(data={"sub": str(user.id), "email": user.email})
+
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "")
+    await log_action(
+        db, "REGISTER", user_id=user.id,
+        resource_type="user", resource_id=str(user.id),
+        ip_address=client_ip, user_agent=user_agent,
+    )
 
     return TokenResponse(
         access_token=access_token,
@@ -133,6 +143,14 @@ async def login(
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
     if user is None or not verify_password(body.password, user.password_hash):
+        client_ip = request.client.host if request.client else "unknown"
+        user_agent = request.headers.get("user-agent", "")
+        await log_action(
+            db, "LOGIN_FAILED",
+            resource_type="user", resource_id=body.email,
+            ip_address=client_ip, user_agent=user_agent,
+            details="Invalid credentials",
+        )
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
@@ -147,6 +165,13 @@ async def login(
         )
 
     access_token = create_access_token(data={"sub": str(user.id), "email": user.email})
+
+    user_agent = request.headers.get("user-agent", "")
+    await log_action(
+        db, "LOGIN_SUCCESS", user_id=user.id,
+        resource_type="user", resource_id=str(user.id),
+        ip_address=client_ip, user_agent=user_agent,
+    )
 
     return TokenResponse(
         access_token=access_token,
@@ -178,8 +203,17 @@ async def me(
 
 @router.post("/logout", response_model=MessageResponse)
 async def logout(
+    request: Request,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
 ):
+    client_ip = request.client.host if request.client else "unknown"
+    user_agent = request.headers.get("user-agent", "")
+    await log_action(
+        db, "LOGOUT", user_id=current_user.id,
+        resource_type="user", resource_id=str(current_user.id),
+        ip_address=client_ip, user_agent=user_agent,
+    )
     return MessageResponse(message="Logout successful. Discard your token on the client.")
 
 

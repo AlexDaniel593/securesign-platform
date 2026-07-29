@@ -65,7 +65,11 @@ async def generate_keys(db: AsyncSession, user_id: int) -> dict:
         db.add(new_key)
 
     await db.commit()
-    return {"fingerprint": fingerprint, "message": "RSA key pair generated successfully"}
+    return {
+        "fingerprint": fingerprint,
+        "public_key": public_pem.decode(),
+        "message": "RSA key pair generated successfully",
+    }
 
 
 async def sign_hash(

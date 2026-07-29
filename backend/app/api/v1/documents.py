@@ -46,6 +46,21 @@ class MessageResponse(BaseModel):
     message: str
 
 
+class VerifyFileSignatureItem(BaseModel):
+    id: int
+    signed_at: datetime
+    is_valid: bool
+    verified_at: datetime
+    signer_name: str
+    signer_email: str
+    certificate_status: Literal["valid", "revoked", "expired", "not_found"]
+
+
+class VerifyFileResponse(BaseModel):
+    sha256_hash: str
+    signatures: list[VerifyFileSignatureItem]
+
+
 # ---------------------------------------------------------------------------
 # Schemas — PR #2 (mutating + sign + signatures)
 # ---------------------------------------------------------------------------
@@ -166,7 +181,24 @@ async def download_document(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
-    content, filename = await document_service.get_document_bytes(db, current_user.id, doc_id)
+    content, filename, sha256_hash = await document_service.get_document_bytes(
+        db, current_user.id, doc_id
+    )
+
+    from sqlmodel import select, func
+    from app.db.models import Signature
+
+    sig_result = await db.execute(
+        select(func.count()).select_from(Signature).where(
+            Signature.sha256_hash == sha256_hash
+        )
+    )
+    sig_count = sig_result.scalar() or 0
+
+    if sig_count > 0:
+        name, ext = filename.rsplit(".", 1) if "." in filename else (filename, "pdf")
+        filename = f"{name}-signed.{ext}"
+
     return Response(
         content=content,
         media_type="application/octet-stream",
@@ -274,3 +306,18 @@ async def verify_signature(
         db, current_user.id, doc_id, sig_id
     )
     return VerificationResult(**result)
+
+
+@router.post("/verify-file", response_model=VerifyFileResponse)
+async def verify_uploaded_file(
+    file: UploadFile = File(...),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload a PDF, compute its hash, look up signatures by hash, and verify each.
+
+    Read-only — nothing is persisted (no Document row, no Signature mutation).
+    """
+    content = await file.read()
+    sha256_hash = document_service.hash_content(content)
+    sigs = await document_service.verify_document_by_hash(db, sha256_hash)
+    return VerifyFileResponse(sha256_hash=sha256_hash, signatures=sigs)

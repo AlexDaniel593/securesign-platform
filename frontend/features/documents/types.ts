@@ -60,6 +60,21 @@ export interface VerificationResult {
   certificate_status: "valid" | "revoked" | "expired" | "not_found"
 }
 
+export interface VerifyFileSignatureItem {
+  id: number
+  signed_at: string
+  is_valid: boolean
+  verified_at: string
+  signer_name: string
+  signer_email: string
+  certificate_status: "valid" | "revoked" | "expired" | "not_found"
+}
+
+export interface VerifyFileResponse {
+  sha256_hash: string
+  signatures: VerifyFileSignatureItem[]
+}
+
 export interface ApiError {
   detail?: string
   message?: string

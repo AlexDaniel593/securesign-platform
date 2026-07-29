@@ -7,12 +7,14 @@ from app.api.v1 import router as v1_router
 from app.core import storage
 from app.core.config import settings
 from app.db.database import init_db
+from app.db.seed import seed_admin
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
     await storage.ensure_bucket_exists()
+    await seed_admin()
     yield
 
 

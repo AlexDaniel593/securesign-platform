@@ -5,11 +5,12 @@ import { parseWithZod } from "@conform-to/zod"
 import { z } from "zod"
 import { useRouter } from "next/navigation"
 import { toast } from "sonner"
-import { Check, Loader2, Lock, Mail, User, X } from "lucide-react"
+import { Check, Eye, EyeOff, Loader2, Lock, Mail, User, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { register } from "@/features/auth/services/auth-service"
+import { setToken } from "@/lib/auth"
 import { useMemo, useState } from "react"
 
 const PASSWORD_RULES = [
@@ -42,6 +43,8 @@ const schema = z
 export function RegisterForm() {
   const router = useRouter()
   const [isPending, setIsPending] = useState(false)
+  const [showPassword, setShowPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
 
   const [password, setPassword] = useState("")
   const passwordRules = useMemo(
@@ -65,7 +68,7 @@ export function RegisterForm() {
 
       register(data)
         .then((res) => {
-          document.cookie = `token=${res.access_token}; path=/; max-age=86400; samesite=lax`
+          setToken(res.access_token)
           toast.success("Cuenta creada correctamente")
           router.push("/dashboard")
         })
@@ -122,12 +125,20 @@ export function RegisterForm() {
             <Input
               id={fields.password.id}
               name={fields.password.name}
-              type="password"
+              type={showPassword ? "text" : "password"}
               placeholder="••••••••"
-              className="pl-10"
+              className="pl-10 pr-10"
               defaultValue={fields.password.initialValue}
               onChange={(e) => setPassword(e.target.value)}
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              tabIndex={-1}
+            >
+              {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
           </div>
           {fields.password.errors && (
             <p className="text-sm text-destructive">{fields.password.errors}</p>
@@ -157,11 +168,19 @@ export function RegisterForm() {
             <Input
               id={fields.confirmPassword.id}
               name={fields.confirmPassword.name}
-              type="password"
+              type={showConfirmPassword ? "text" : "password"}
               placeholder="••••••••"
-              className="pl-10"
+              className="pl-10 pr-10"
               defaultValue={fields.confirmPassword.initialValue}
             />
+            <button
+              type="button"
+              onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              tabIndex={-1}
+            >
+              {showConfirmPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
+            </button>
           </div>
           {fields.confirmPassword.errors && (
             <p className="text-sm text-destructive">

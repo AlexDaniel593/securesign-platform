@@ -3,6 +3,7 @@
 import { useCallback, useState } from "react"
 import { UploadSection } from "@/features/documents/components/upload-section"
 import { DocumentList } from "@/features/documents/components/document-list"
+import { VerifySection } from "@/features/documents/components/verify-section"
 
 export default function DocumentsPage() {
   const [refetchTrigger, setRefetchTrigger] = useState(0)
@@ -19,6 +20,7 @@ export default function DocumentsPage() {
 
       <UploadSection onUploadSuccess={triggerRefetch} />
       <DocumentList refetchTrigger={refetchTrigger} />
+      <VerifySection />
     </div>
   )
 }

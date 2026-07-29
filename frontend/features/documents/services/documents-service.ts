@@ -8,7 +8,10 @@ import type {
   SignRequest,
   SignaturesResponse,
   VerificationResult,
+  VerifyFileResponse,
 } from "@/features/documents/types"
+import { getToken } from "@/lib/auth"
+import { translateError } from "@/lib/errors"
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1"
 
@@ -16,17 +19,14 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000/api/v1
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const error = await response.json().catch(() => ({ message: "Request failed" }))
-    throw new Error(error.detail ?? error.message ?? "An unexpected error occurred")
+    throw new Error(translateError(error.detail ?? error.message ?? "An unexpected error occurred"))
   }
   return response.json()
 }
 
 // NOTE: duplicated from crypto-service.ts. Out of scope to refactor shared helpers.
 function authHeaders(): Record<string, string> {
-  const token = document.cookie
-    .split("; ")
-    .find((row) => row.startsWith("token="))
-    ?.split("=")[1]
+  const token = getToken()
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
@@ -125,4 +125,15 @@ export async function verifySignature(
     headers: { "Content-Type": "application/json", ...authHeaders() },
   })
   return handleResponse<VerificationResult>(response)
+}
+
+export async function verifyFile(file: File): Promise<VerifyFileResponse> {
+  const formData = new FormData()
+  formData.append("file", file)
+
+  const response = await fetch(`${API_URL}/documents/verify-file`, {
+    method: "POST",
+    body: formData,
+  })
+  return handleResponse<VerifyFileResponse>(response)
 }
